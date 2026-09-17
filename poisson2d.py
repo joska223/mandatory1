@@ -53,7 +53,11 @@ class Poisson2D:
         A : scipy sparse LIL matrix
             The vectorized Laplace operator
         """
-        raise NotImplementedError("The laplace method is not implemented yet.")
+        D = sparse.diags([1., -2., 1.], [-1, 0, 1], (N + 1, N + 1), format="lil")
+        D[0, :4] = 2, -5, 4, -1
+        D[-1, -4:] = -1, 4, -5, 2
+
+        return D.tocsr()
 
     def assemble(
         self, N: int, f: sp.Expr, ue: sp.Expr
@@ -84,7 +88,42 @@ class Poisson2D:
         Dirichlet boundary conditions using the exact solution ue.
 
         """
-        raise NotImplementedError("The assemble method is not implemented yet.")
+
+        xij, yij = self.create_mesh(N)
+
+        mesh_f = self.meshfunction(f, xij, yij).ravel()
+
+        bnds = self.get_boundary_indices(N)
+
+        ue_np = sp.lambdify((x,y), ue, modules = "numpy")
+        BC = ue_np(xij, yij).ravel()[bnds]
+
+        b = mesh_f.ravel()
+        b[bnds] = BC
+        
+
+        D = self.laplace(N)    
+        h = self.p.L/N
+
+        D2x = (1./h**2)*D
+        D2y = (1./h**2)*D
+        I = sparse.eye(N + 1, format="csr")
+
+        A = (
+            sparse.kron(D2x, I, format="csr")
+            + sparse.kron(I, D2y, format="csr")
+        )
+
+        A = A.tolil()
+
+        for i in bnds:
+            A[i, :] = 0
+            A[i, i] = 1.0
+
+        A = A.tocsr()
+
+        return A, b
+
 
     def meshfunction(self, u: sp.Expr, xij: np.ndarray, yij: np.ndarray) -> np.ndarray:
         """Return Sympy function as mesh function
@@ -97,13 +136,17 @@ class Poisson2D:
         -------
         array - The input function as a mesh function
         """
-        raise NotImplementedError("The meshfunction method is not implemented yet.")
+        ue_np = sp.lambdify((x,y), u, modules = "numpy")
+        b = ue_np(xij, yij)
+        return b.ravel()
+
 
     def get_boundary_indices(self, N: int) -> np.ndarray:
         """Return indices of vectorized matrix that belongs to the boundary"""
-        raise NotImplementedError(
-            "The get_boundary_indices method is not implemented yet."
-        )
+        B = np.ones((N+1, N+1), dtype=bool)
+        B[1:-1, 1:-1] = 0
+        bnds = np.where(B.ravel() == 1)[0]
+        return bnds
 
     def l2_error(self, u: np.ndarray, ue: sp.Expr) -> float:
         """Return l2-error
@@ -118,27 +161,31 @@ class Poisson2D:
         Returns
         -------
         float - The l2-error
-
         """
-        raise NotImplementedError("The l2_error method is not implemented yet.")
+        N = len(u[0,:])-1
+        h = self.p.L / N
+        ue_np = sp.lambdify((x,y), ue, modules = "numpy")
+        xij, yij = self.create_mesh(N)
+        b = ue_np(xij, yij)
+        a = np.sum((u-b)**2)
+        return np.sqrt((h**2)*a)
+
 
     def __call__(self, N: int, ue: sp.Expr) -> np.ndarray:
-        """Solve Poisson's equation with a given manufactured solution
+        print("  assembling", N)
+        A, b = self.assemble(
+            N,
+            sp.diff(ue, x, 2) + sp.diff(ue, y, 2),
+            ue
+        )
 
-        Parameters
-        ----------
-        Nx : int
-            The number of uniform intervals in both x and y directions
-        ue : Sympy expression
-            The exact solution
+        print("  assembled", N, "nnz =", A.nnz)
+        print("  solving", N)
 
-        Returns
-        -------
-        The solution as a Numpy array
+        u = sparse_linalg.spsolve(A, b.ravel())
 
-        """
-        A, b = self.assemble(N, sp.diff(ue, x, 2) + sp.diff(ue, y, 2), ue)
-        return sparse_linalg.spsolve(A, b.ravel()).reshape((N + 1, N + 1))
+        print("  solved", N)
+        return u.reshape((N + 1, N + 1))
 
     def convergence_rates(self, ue: sp.Expr, m: int = 6):
         E = []
@@ -165,7 +212,26 @@ class Poisson2D:
         The value of u(x, y)
 
         """
-        raise NotImplementedError("The eval method is not implemented yet.")
+        
+        N = len(U[0,:])-1
+        L = self.p.L 
+
+        #find the closest index to the requested point
+        x_pos = (x/L)*N
+        y_pos = (y/L)*N
+        
+        x_idx = int(np.floor((x/L)*N))
+        y_idx = int(np.floor((y/L)*N))
+     
+        x_space = x_pos-x_idx
+        y_space = y_pos-y_idx
+
+        ans =   (1-x_space)*(1-y_space)*U[x_idx, y_idx]+\
+            (1-x_space)*y_space*U[x_idx, y_idx+1]+\
+            x_space*(1-y_space)*U[x_idx+1, y_idx]+\
+        x_space*y_space*U[x_idx+1, y_idx+1]
+    
+        return ans
 
 
 def test_convergence_poisson2d():
