@@ -172,19 +172,13 @@ class Poisson2D:
 
 
     def __call__(self, N: int, ue: sp.Expr) -> np.ndarray:
-        print("  assembling", N)
         A, b = self.assemble(
             N,
             sp.diff(ue, x, 2) + sp.diff(ue, y, 2),
             ue
         )
 
-        print("  assembled", N, "nnz =", A.nnz)
-        print("  solving", N)
-
         u = sparse_linalg.spsolve(A, b.ravel())
-
-        print("  solved", N)
         return u.reshape((N + 1, N + 1))
 
     def convergence_rates(self, ue: sp.Expr, m: int = 6):
